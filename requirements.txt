@@ -1,0 +1,22 @@
+# --- LLM backends ---
+# Local, default. No API key, no rate limits.
+llama-index-llms-ollama
+# Cloud, optional. Set LLM_BACKEND=groq and a GROQ_API_KEY in .env to use.
+llama-index-llms-groq
+
+# --- Core RAG framework ---
+llama-index-core
+
+# --- Embeddings (run locally on CPU) ---
+llama-index-embeddings-huggingface
+sentence-transformers
+
+# --- Web UI (FastAPI + server-sent events) ---
+fastapi
+uvicorn
+
+# --- Config ---
+python-dotenv
+
+# --- Wikipedia download (MediaWiki API) ---
+httpx

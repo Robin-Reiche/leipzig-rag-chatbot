@@ -1,0 +1,9 @@
+# Evaluation harness only (lesson 4). Kept separate from the app.
+# Install with: uv pip install -r requirements-eval.txt
+#
+# Note: the lesson uses the `ragas` library. In this environment the current
+# ragas + langchain releases have an incompatible API, so the evaluation here is
+# a small, dependency-light LLM-as-judge re-implementation that measures the
+# same four metrics and runs on the local Ollama backend. The only extra
+# dependency is pandas, for writing the CSV scorecards.
+pandas

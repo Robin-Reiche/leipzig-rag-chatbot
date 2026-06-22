@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Leipzig-Experte · RAG-Chatbot</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f6f6b'/%3E%3Ctext x='16' y='23' font-size='20' font-family='sans-serif' font-weight='700' fill='white' text-anchor='middle'%3EL%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">L</span>
+        <div class="brand-text">
+          <h1>Leipzig-Experte</h1>
+          <p>Dein persönlicher Experte für Geschichte, Kultur und Sehenswürdigkeiten</p>
+        </div>
+      </div>
+      <div class="topbar-right">
+        <span class="badge" id="backend-badge" title="Aktives Sprachmodell">lädt …</span>
+        <button id="reset-btn" class="ghost-btn" type="button">Neue Unterhaltung</button>
+      </div>
+    </header>
+
+    <main id="chat" class="chat">
+      <div class="welcome" id="welcome">
+        <div class="welcome-card">
+          <h2>Frag mich über Leipzig</h2>
+          <p>
+            Ich antworte ausschließlich auf Basis einer Wissensbasis aus
+            <strong id="doc-count">…</strong> Dokumenten und zeige dir bei jeder
+            Antwort, welche Quellen ich dafür durchsucht habe.
+          </p>
+          <div class="suggestions" id="suggestions">
+            <button type="button">Was geschah bei der Völkerschlacht 1813?</button>
+            <button type="button">Welche Rolle spielte die Nikolaikirche 1989?</button>
+            <button type="button">Was hat Johann Sebastian Bach mit Leipzig zu tun?</button>
+            <button type="button">Erzähl mir etwas über Auerbachs Keller.</button>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="composer">
+      <form id="composer-form">
+        <textarea
+          id="input"
+          rows="1"
+          placeholder="Stell deine Frage zu Leipzig …"
+          aria-label="Deine Frage zu Leipzig"
+          autocomplete="off"
+        ></textarea>
+        <button id="send-btn" type="submit" aria-label="Senden">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+            <path fill="currentColor" d="M3.4 20.4 21 12 3.4 3.6 3 10l12 2-12 2z" />
+          </svg>
+        </button>
+      </form>
+      <p class="disclaimer">
+        Antworten basieren auf Wikipedia-Texten (CC BY-SA 4.0) und können Fehler
+        enthalten. Quellen jeweils unter der Antwort.
+      </p>
+    </footer>
+
+    <!-- Screen-reader live region: announces status and the final answer once,
+         instead of every streamed token. -->
+    <div id="sr-live" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

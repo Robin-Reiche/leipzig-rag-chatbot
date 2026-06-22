@@ -1,0 +1,24 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# RAG build artifacts (vector store + cached embedding model, regenerated on run)
+local_storage/
+# Evaluation outputs
+evaluation/evaluation_results/
+evaluation/evaluation_vector_stores/
+evaluation/evaluation_embedding_models/
+
+# Editors
+.vscode/
+.idea/
+.claude/
+
+# WBS course material (lessons + provided solutions, not part of the project)
+todo/
