@@ -138,8 +138,49 @@ def score_context_recall(
     return _judge(llm, prompt)
 
 
-def save_results(results_df: pd.DataFrame, filename_prefix: str) -> None:
-    """Saves a detailed per-question CSV and an averaged summary CSV."""
+def score_rows(
+    judge: LLM,
+    questions: list[str],
+    answers: list[str],
+    ground_truths: list[str],
+    contexts: list[list[str]],
+) -> list[dict]:
+    """Scores each answer on the four metrics with the judge LLM."""
+
+    rows: list[dict] = []
+    for i, question in enumerate(questions):
+        print(f"  Scoring {i + 1}/{len(questions)} …")
+        rows.append(
+            {
+                "question": question,
+                "answer": answers[i],
+                "ground_truth": ground_truths[i],
+                "faithfulness": score_faithfulness(judge, answers[i], contexts[i]),
+                "answer_correctness": score_answer_correctness(
+                    judge, answers[i], ground_truths[i]
+                ),
+                "context_precision": score_context_precision(
+                    judge, question, contexts[i]
+                ),
+                "context_recall": score_context_recall(
+                    judge, ground_truths[i], contexts[i]
+                ),
+            }
+        )
+    return rows
+
+
+def save_results(
+    results_df: pd.DataFrame,
+    filename_prefix: str,
+    group_by: list[str] | None = None,
+) -> None:
+    """Saves a detailed per-question CSV and an averaged summary CSV.
+
+    Without ``group_by`` the summary is a single averaged column. With it (used
+    by the multi-config stages) the metrics are averaged per configuration, so
+    each chunking/reranker/HyDE setting gets its own row to compare.
+    """
 
     EVALUATION_RESULTS_PATH.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -150,9 +191,12 @@ def save_results(results_df: pd.DataFrame, filename_prefix: str) -> None:
     results_df.to_csv(detailed_path, index=False)
     print(f"\nDetailed results: {detailed_path}")
 
-    summary = (
-        results_df[METRIC_NAMES].mean().round(3).to_frame("average_score")
-    )
+    if group_by:
+        summary = results_df.groupby(group_by)[METRIC_NAMES].mean().round(3)
+    else:
+        summary = (
+            results_df[METRIC_NAMES].mean().round(3).to_frame("average_score")
+        )
     summary_path = (
         EVALUATION_RESULTS_PATH / f"{filename_prefix}_summary_{timestamp}.csv"
     )

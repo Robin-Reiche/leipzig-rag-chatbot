@@ -13,25 +13,29 @@ The result is a focused, honest expert that stays on the facts and points back t
 RAG in three steps:
 
 1. **Indexing** (once): the documents in `data/` are split into overlapping chunks, turned into vectors by an embedding model and stored in a persistent vector store on disk.
-2. **Retrieval**: for each question, the most relevant chunks are pulled from the vector store.
+2. **Retrieval**: a follow-up is first condensed against the chat history into a standalone query, then a broad set of candidate chunks is pulled from the vector store and a cross-encoder reranker keeps only the most relevant few.
 3. **Generation**: those chunks and the question go to the LLM, which writes an answer grounded in the sources. A low temperature and a strict system prompt keep it factual.
 
 ## Features
 
 - **Local first**: runs fully offline on a local LLM through Ollama, no API key and no rate limits. A Groq cloud backend is available through a single config switch.
 - **Streaming web UI**: a FastAPI app with Server-Sent Events shows the live status, the retrieved sources (title, similarity score, snippet and a clickable Wikipedia link) and the answer appearing token by token.
+- **Model picker**: switch the local chat model at runtime from the UI, with no restart. Only the generator changes, so the conversation and sources stay intact.
+- **Two-stage retrieval**: a broad vector search followed by a cross-encoder reranker that re-scores the candidates and keeps only the most relevant, for a cleaner context with less noise.
+- **Follow-up handling**: questions are condensed against the chat history into a standalone query, so "and when did he die?" still retrieves the right sources.
 - **Grounded answers with sources**: the system prompt ties answers to the retrieved context and tells the model to admit when the documents do not cover a question.
 - **Conversation memory**: a token-budgeted memory buffer keeps follow-up questions coherent without overflowing the model's context window.
 - **Multilingual embeddings**: the knowledge base is German, so it uses a multilingual embedding model instead of an English one that retrieves German text poorly.
 - **Command-line mode**: a terminal chat for quick testing without the browser.
 - **Reproducible knowledge base**: a script rebuilds the corpus from Wikipedia on demand, with source and license headers per file.
-- **Evaluation lab**: a separate harness scores answer quality with an LLM judge on four metrics.
+- **Evaluation lab and model benchmark**: a separate harness scores answer quality with an LLM judge on four metrics, plus a benchmark that compares whole models on quality and speed.
 
 ## Tech Stack
 
-- **RAG framework**: LlamaIndex (indexing, retrieval, chat memory)
-- **LLM**: local Ollama (`gemma4:12b`) by default, Groq (`llama-3.3-70b-versatile`) optional
+- **RAG framework**: LlamaIndex (indexing, retrieval, reranking, chat memory)
+- **LLM**: local Ollama (`gemma4:e2b`) by default, switchable at runtime, Groq (`llama-3.3-70b-versatile`) optional
 - **Embeddings**: `paraphrase-multilingual-MiniLM-L12-v2`, local on CPU
+- **Reranker**: `BAAI/bge-reranker-base` cross-encoder, multilingual, local on CPU
 - **Web**: FastAPI, Server-Sent Events, vanilla HTML, CSS and JS (no build step)
 - **Data**: German Wikipedia via the MediaWiki API (httpx)
 - **Evaluation**: a custom LLM-as-judge over four metrics, pandas for the scorecard
@@ -43,6 +47,7 @@ leipzig-rag-chatbot/
 ├── main.py                 entry point: starts the web UI (or the CLI)
 ├── prepare_data.py         downloads the Leipzig knowledge base from Wikipedia
 ├── evaluate.py             entry point for the evaluation lab
+├── benchmark_llms.py       compares several local models on quality and speed
 ├── requirements.txt        app dependencies
 ├── requirements-eval.txt   extra dependencies for evaluation
 ├── data/                   the knowledge base (Wikipedia text, CC BY-SA 4.0)
@@ -62,7 +67,7 @@ Prerequisites:
 
 - [Ollama](https://ollama.com) installed and running, with the model pulled:
   ```bash
-  ollama pull gemma4:12b
+  ollama pull gemma4:e2b
   ```
 - A Python 3.11 environment with the dependencies (shown here with `uv`):
   ```bash
@@ -95,10 +100,14 @@ Rather than judging by feel, the lab in `evaluation/` measures quality with an L
 
 ```bash
 uv pip install -r requirements-eval.txt
-python evaluate.py
+python evaluate.py            # baseline (default)
+python evaluate.py rerank     # compare reranker settings (retrieve-k vs rerank-n)
+python evaluate.py rewrite    # test HyDE query rewriting
 ```
 
 Results are written as a CSV scorecard to `evaluation/evaluation_results/`. The questions and reference answers live in `evaluation/evaluation_questions.py`.
+
+To compare whole models instead of pipeline settings, run `python benchmark_llms.py`. It sends every candidate model through the same retrieval and reranking pipeline and scores them on quality and speed with one fixed judge, so they are graded on equal footing.
 
 ## Use Your Own Topic
 
@@ -115,4 +124,4 @@ The knowledge base is built from German Wikipedia articles (CC BY-SA 4.0). Each 
 
 ## Limitations and Next Steps
 
-This is a single-user demo: the server keeps one shared conversation and memory, which is fine for a local showcase but not for concurrent users. Retrieval uses the question as typed, so a reranker and query rewriting (condensing follow-ups against the chat history) are the natural next steps to sharpen retrieval. The evaluation currently covers the baseline configuration. The obvious extension is to compare configurations (chunk size, top-k, embedding model) on the same metrics.
+This is a single-user demo: the server keeps one shared conversation and memory, which is fine for a local showcase but not for concurrent users. Retrieval already runs two stages (vector search plus a cross-encoder reranker) and condenses follow-ups against the chat history, and the evaluation lab compares reranker and query-rewriting (HyDE) settings on the four metrics. The natural next steps: a stronger, fixed evaluation judge (the lab currently grades with the active chat model, which is light), a larger question set for sharper numbers, and adding HyDE to the live app once the evaluation shows it helps.

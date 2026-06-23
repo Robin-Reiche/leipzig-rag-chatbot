@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -22,13 +23,20 @@ from llama_index.core.schema import NodeWithScore
 
 from src.config import DATA_PATH, GROQ_MODEL, LLM_BACKEND, OLLAMA_MODEL
 from src.engine import RagChatbot, build_streaming_chatbot
+from src.model_loader import initialise_llm
+
+OLLAMA_TAGS_URL = "http://localhost:11434/api/tags"
 
 WEB_DIR: Path = Path(__file__).parent.parent / "web"
 
 # A single shared chatbot. This is a single-user demo, so one conversation and
 # one memory buffer is fine. Use the "Neue Unterhaltung" button (/api/reset) to
-# start fresh.
-_state: dict[str, Any] = {"chatbot": None, "sources_meta": {}}
+# start fresh. ``current_model`` tracks the active generator for the UI picker.
+_state: dict[str, Any] = {
+    "chatbot": None,
+    "sources_meta": {},
+    "current_model": GROQ_MODEL if LLM_BACKEND == "groq" else OLLAMA_MODEL,
+}
 
 _STOP = object()  # sentinel marking the end of the token stream
 
@@ -167,9 +175,77 @@ async def reset() -> dict[str, str]:
 async def info() -> dict[str, Any]:
     """Backend details shown in the UI header."""
 
-    model = GROQ_MODEL if LLM_BACKEND == "groq" else OLLAMA_MODEL
     doc_count = len(list(DATA_PATH.glob("*.txt")))
-    return {"backend": LLM_BACKEND, "model": model, "documents": doc_count}
+    return {
+        "backend": LLM_BACKEND,
+        "model": _state["current_model"],
+        "documents": doc_count,
+    }
+
+
+def _list_ollama_models() -> list[str]:
+    """Lists the chat models pulled into the local Ollama, sorted by name."""
+
+    try:
+        response = httpx.get(OLLAMA_TAGS_URL, timeout=5.0)
+        response.raise_for_status()
+        names = [m["name"] for m in response.json().get("models", [])]
+    except Exception:  # Ollama down or unreachable: return nothing, UI copes
+        return []
+    return sorted(names)
+
+
+@app.get("/api/models")
+async def models() -> dict[str, Any]:
+    """Lists models for the picker. Empty/locked for the Groq backend."""
+
+    if LLM_BACKEND == "groq":
+        return {"models": [GROQ_MODEL], "current": GROQ_MODEL, "backend": "groq"}
+
+    available = await asyncio.to_thread(_list_ollama_models)
+    current = _state["current_model"]
+    if current and current not in available:
+        available = [current, *available]
+    return {"models": available, "current": current, "backend": LLM_BACKEND}
+
+
+@app.post("/api/model")
+async def set_model(request: Request) -> dict[str, Any]:
+    """Switches the chat generator to another local Ollama model at runtime."""
+
+    if LLM_BACKEND == "groq":
+        return {"status": "error", "message": "Modellwahl nur im Ollama-Backend."}
+
+    body = await request.json()
+    model = (body.get("model") or "").strip()
+    if not model:
+        return {"status": "error", "message": "Kein Modell angegeben."}
+
+    # Reject models that are not installed. The Ollama client itself only fails
+    # at query time, which would leave the chatbot pointing at a broken model.
+    # (Skip the check if the tags call failed, so a transient hiccup does not
+    # block a legitimate switch.)
+    available = await asyncio.to_thread(_list_ollama_models)
+    if available and model not in available:
+        return {
+            "status": "error",
+            "message": f"Modell '{model}' ist nicht installiert.",
+        }
+
+    chatbot: RagChatbot | None = _state["chatbot"]
+    if chatbot is None:
+        return {"status": "error", "message": "Chatbot ist noch nicht bereit."}
+
+    try:
+        # Building the client is cheap; the model loads into VRAM on the next
+        # question. Run off the event loop to stay consistent and safe.
+        llm = await asyncio.to_thread(initialise_llm, model)
+    except Exception as error:  # surface a bad model name to the UI
+        return {"status": "error", "message": f"Fehler: {error}"}
+
+    chatbot.set_llm(llm)
+    _state["current_model"] = model
+    return {"status": "ok", "model": model}
 
 
 @app.get("/")

@@ -25,6 +25,7 @@ from llama_index.core.chat_engine.types import BaseChatEngine
 from llama_index.core.llms import LLM, ChatMessage, MessageRole
 from llama_index.core.memory import ChatMemoryBuffer
 from llama_index.core.node_parser import SentenceSplitter
+from llama_index.core.postprocessor import SentenceTransformerRerank
 from llama_index.core.retrievers import BaseRetriever
 from llama_index.core.schema import Document, NodeWithScore
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
@@ -33,8 +34,14 @@ from src.config import (
     CHAT_MEMORY_TOKEN_LIMIT,
     CHUNK_OVERLAP,
     CHUNK_SIZE,
+    CONDENSE_ENABLED,
+    CONDENSE_PROMPT_TEMPLATE,
     DATA_PATH,
     LLM_SYSTEM_PROMPT,
+    RERANK_ENABLED,
+    RERANK_RETRIEVE_TOP_K,
+    RERANKER_MODEL_NAME,
+    RERANKER_TOP_N,
     SIMILARITY_TOP_K,
     VECTOR_STORE_PATH,
 )
@@ -160,25 +167,60 @@ class RagChatbot:
         retriever: BaseRetriever,
         system_prompt: str,
         memory_token_limit: int,
+        reranker: SentenceTransformerRerank | None = None,
     ) -> None:
         self.llm = llm
         self.retriever = retriever
+        self.reranker = reranker
         self.system_prompt = system_prompt
         self.memory: ChatMemoryBuffer = ChatMemoryBuffer.from_defaults(
             token_limit=memory_token_limit
         )
 
-    def retrieve(self, question: str) -> list[NodeWithScore]:
-        """Step 1+2: find the most relevant chunks for the question.
+    def _condense_question(self, question: str) -> str:
+        """Rewrites a follow-up into a standalone query using the chat history.
 
-        Retrieval uses the question as typed. Follow-ups that only make sense
-        with history ("Und wann wurde sie gegründet?") are therefore retrieved
-        on the bare pronoun. Condensing the question against the chat history
-        first would fix that, at the cost of an extra LLM call per turn. Left
-        out for now to keep responses snappy on the local model.
+        Returns the question unchanged on the first turn (no history) or if
+        condensing is disabled or fails. The rewrite is an optimisation, so a
+        failed call falls back to the original question instead of breaking the
+        turn.
         """
 
-        return self.retriever.retrieve(question)
+        if not CONDENSE_ENABLED:
+            return question
+        history = self.memory.get()
+        if not history:
+            return question
+
+        history_text = "\n".join(
+            f"{message.role.value}: {message.content}" for message in history
+        )
+        prompt = CONDENSE_PROMPT_TEMPLATE.format(
+            chat_history=history_text, question=question
+        )
+        try:
+            condensed = str(self.llm.complete(prompt)).strip()
+        except Exception as error:  # condensing is optional, never fatal
+            print(f"    ! condense failed ({error}), using original question")
+            return question
+        return condensed or question
+
+    def retrieve(self, question: str) -> list[NodeWithScore]:
+        """Step 1+2: condense the question, retrieve broadly, then rerank.
+
+        Follow-ups are first condensed against the chat history into a stand-
+        alone query (one extra LLM call, only when history exists). The vector
+        store then returns a broad set of candidates, and the cross-encoder
+        reranker re-scores them and keeps only the most relevant few.
+        """
+
+        search_query = self._condense_question(question)
+        nodes = self.retriever.retrieve(search_query)
+        if self.reranker is not None:
+            nodes = self.reranker.postprocess_nodes(
+                nodes, query_str=search_query
+            )
+        return nodes
 
     def _system_message(self, nodes: list[NodeWithScore]) -> ChatMessage:
         """Builds the system prompt with the retrieved context injected."""
@@ -237,6 +279,15 @@ class RagChatbot:
 
         self.memory.reset()
 
+    def set_llm(self, llm: LLM) -> None:
+        """Swaps the generator model used from the next answer onward.
+
+        Only the generator changes; the retriever, reranker and memory stay, so
+        the conversation continues seamlessly with the new model.
+        """
+
+        self.llm = llm
+
 
 def build_streaming_chatbot() -> RagChatbot:
     """Builds the streaming RAG chatbot used by the web server."""
@@ -245,13 +296,26 @@ def build_streaming_chatbot() -> RagChatbot:
     llm: LLM = initialise_llm()
     embed_model: HuggingFaceEmbedding = get_embedding_model()
     vector_index: VectorStoreIndex = get_vector_store(embed_model)
+
+    # With reranking on, retrieve a broad candidate set and let the reranker
+    # narrow it down. Without it, retrieve the final count directly.
+    retrieve_top_k = RERANK_RETRIEVE_TOP_K if RERANK_ENABLED else SIMILARITY_TOP_K
     retriever: BaseRetriever = vector_index.as_retriever(
-        similarity_top_k=SIMILARITY_TOP_K
+        similarity_top_k=retrieve_top_k
     )
+
+    reranker: SentenceTransformerRerank | None = None
+    if RERANK_ENABLED:
+        print(f"Loading reranker '{RERANKER_MODEL_NAME}' ...")
+        reranker = SentenceTransformerRerank(
+            model=RERANKER_MODEL_NAME, top_n=RERANKER_TOP_N
+        )
+
     print("RAG chatbot ready.")
     return RagChatbot(
         llm=llm,
         retriever=retriever,
+        reranker=reranker,
         system_prompt=LLM_SYSTEM_PROMPT,
         memory_token_limit=CHAT_MEMORY_TOKEN_LIMIT,
     )

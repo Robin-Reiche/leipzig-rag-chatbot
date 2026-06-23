@@ -25,8 +25,18 @@ from src.config import (
 load_dotenv()
 
 
-def initialise_llm() -> LLM:
-    """Builds the generator LLM for the configured backend (ollama or groq)."""
+# gemma4 and qwen3 are reasoning models that emit long <think> traces by
+# default. For this factual RAG bot that only adds latency (and, when used as the
+# eval judge, pollutes the numeric score), so thinking is switched off for them.
+_THINKING_MODELS: tuple[str, ...] = ("gemma4", "qwen3")
+
+
+def initialise_llm(model: str | None = None) -> LLM:
+    """Builds the generator LLM for the configured backend (ollama or groq).
+
+    ``model`` overrides the configured Ollama model, which lets the web UI switch
+    the chat model at runtime. It is ignored for the Groq backend.
+    """
 
     if LLM_BACKEND == "groq":
         from llama_index.llms.groq import Groq
@@ -44,14 +54,20 @@ def initialise_llm() -> LLM:
         )
 
     # Default: local Ollama. Requires the Ollama app running and the model
-    # pulled (`ollama pull gemma4:12b`).
+    # pulled (`ollama pull gemma4:e2b`).
     from llama_index.llms.ollama import Ollama
 
+    chosen_model = model or OLLAMA_MODEL
+    extra: dict = {}
+    if chosen_model.startswith(_THINKING_MODELS):
+        extra["thinking"] = False
+
     return Ollama(
-        model=OLLAMA_MODEL,
+        model=chosen_model,
         request_timeout=LLM_REQUEST_TIMEOUT,
         temperature=LLM_TEMPERATURE,
         context_window=OLLAMA_CONTEXT_WINDOW,
+        **extra,
     )
 
 

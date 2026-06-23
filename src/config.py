@@ -14,8 +14,10 @@ from pathlib import Path
 # LLM_BACKEND environment variable, e.g. LLM_BACKEND=groq python main.py
 LLM_BACKEND: str = os.getenv("LLM_BACKEND", "ollama").lower()
 
-# Local Ollama model (already pulled: gemma4:12b).
-OLLAMA_MODEL: str = "gemma4:12b"
+# Local Ollama model. gemma4:e2b fully fits the 8 GB GPU and is far faster than
+# gemma4:12b (which spills to CPU and times out on long answers here), at equal
+# quality on the eval questions. Swap with `ollama pull <tag>` then change here.
+OLLAMA_MODEL: str = "gemma4:e2b"
 # Groq cloud model, used only when LLM_BACKEND=groq.
 GROQ_MODEL: str = "llama-3.3-70b-versatile"
 
@@ -63,6 +65,35 @@ SIMILARITY_TOP_K: int = 6
 # Chunk size and overlap (in tokens) when splitting documents.
 CHUNK_SIZE: int = 512
 CHUNK_OVERLAP: int = 50
+
+# --- Reranker ------------------------------------------------------------
+# A second, more precise stage after the vector search: retrieve a broad set,
+# then let a cross-encoder re-score and keep only the best few. This hands the
+# generator a cleaner, higher-signal context. Turn off with RERANK_ENABLED=false.
+RERANK_ENABLED: bool = os.getenv("RERANK_ENABLED", "true").lower() == "true"
+# Multilingual cross-encoder. The knowledge base is German, so an English-only
+# reranker (e.g. ms-marco-MiniLM) would score German pairs poorly, the same
+# reason the embedding model above is multilingual. Downloaded once on first run.
+RERANKER_MODEL_NAME: str = "BAAI/bge-reranker-base"
+# Broad first-stage retrieval, then rerank down to the top N for the generator.
+RERANK_RETRIEVE_TOP_K: int = 12
+RERANKER_TOP_N: int = 4
+
+# --- Query condensing ----------------------------------------------------
+# On a follow-up ("Und wann wurde er geboren?") the bare question retrieves
+# poorly. When there is chat history, first rewrite the question into a stand-
+# alone one (one extra LLM call per turn, only when history exists). Turn off
+# with CONDENSE_ENABLED=false.
+CONDENSE_ENABLED: bool = os.getenv("CONDENSE_ENABLED", "true").lower() == "true"
+CONDENSE_PROMPT_TEMPLATE: str = (
+    "Formuliere die FOLGEFRAGE zu einer eigenständigen, vollständigen Frage um, "
+    "die ohne den bisherigen Gesprächsverlauf verständlich ist. Löse dabei "
+    "Bezüge wie 'er', 'sie', 'dort', 'das' anhand des Verlaufs auf. Gib "
+    "ausschließlich die umformulierte Frage zurück, ohne Vorrede.\n\n"
+    "GESPRÄCHSVERLAUF:\n{chat_history}\n\n"
+    "FOLGEFRAGE:\n{question}\n\n"
+    "Eigenständige Frage:"
+)
 
 # --- Chat memory ---------------------------------------------------------
 # Total token budget for the prompt minus the answer: system prompt + injected

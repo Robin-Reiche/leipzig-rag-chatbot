@@ -18,7 +18,15 @@
         </div>
       </div>
       <div class="topbar-right">
-        <span class="badge" id="backend-badge" title="Aktives Sprachmodell">lädt …</span>
+        <select
+          id="model-select"
+          class="model-select"
+          aria-label="Sprachmodell für den Chat"
+          title="Sprachmodell für den Chat"
+        >
+          <option>lädt …</option>
+        </select>
+        <span class="badge" id="backend-badge" title="Backend">lädt …</span>
         <button id="reset-btn" class="ghost-btn" type="button">Neue Unterhaltung</button>
       </div>
     </header>

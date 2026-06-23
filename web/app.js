@@ -8,8 +8,10 @@ const sendBtn = document.getElementById("send-btn");
 const resetBtn = document.getElementById("reset-btn");
 const welcome = document.getElementById("welcome");
 const srLive = document.getElementById("sr-live");
+const modelSelect = document.getElementById("model-select");
 
 let busy = false;
+let modelLocked = false; // true when the backend has no model choice (Groq)
 
 // Announce a message once to screen readers (status changes, final answer).
 function announce(text) {
@@ -21,14 +23,64 @@ fetch("/api/info")
   .then((r) => r.json())
   .then((info) => {
     const badge = document.getElementById("backend-badge");
-    badge.textContent =
-      info.model && info.backend ? `${info.model} · ${info.backend}` : "offline";
+    badge.textContent = info.backend || "offline";
     const count = document.getElementById("doc-count");
     if (count) count.textContent = info.documents;
   })
   .catch(() => {
     document.getElementById("backend-badge").textContent = "offline";
   });
+
+// --- Model picker --------------------------------------------------------
+// Lists the local models and switches the chat generator at runtime. The swap
+// only changes the next answer; the conversation and sources stay intact.
+fetch("/api/models")
+  .then((r) => r.json())
+  .then((data) => {
+    modelSelect.innerHTML = "";
+    const names = data.models && data.models.length ? data.models : [data.current];
+    names.filter(Boolean).forEach((name) => {
+      const opt = el("option", null, name);
+      opt.value = name;
+      if (name === data.current) opt.selected = true;
+      modelSelect.appendChild(opt);
+    });
+    modelSelect.dataset.current = data.current || "";
+    if (data.backend === "groq") {
+      modelLocked = true;
+      modelSelect.disabled = true;
+      modelSelect.title = "Modellwahl nur im Ollama-Backend";
+    }
+  })
+  .catch(() => {
+    modelSelect.innerHTML = "";
+    modelSelect.appendChild(el("option", null, "offline"));
+    modelSelect.disabled = true;
+  });
+
+modelSelect.addEventListener("change", async () => {
+  if (modelLocked) return;
+  const model = modelSelect.value;
+  const previous = modelSelect.dataset.current || "";
+  modelSelect.disabled = true;
+  announce(`Wechsle Modell zu ${model} …`);
+  try {
+    const res = await fetch("/api/model", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model }),
+    });
+    const data = await res.json();
+    if (data.status !== "ok") throw new Error(data.message || "Fehlgeschlagen");
+    modelSelect.dataset.current = model;
+    announce(`Modell gewechselt zu ${model}.`);
+  } catch (err) {
+    if (previous) modelSelect.value = previous; // revert on failure
+    announce(`Modellwechsel fehlgeschlagen: ${err.message}`);
+  } finally {
+    if (!busy) modelSelect.disabled = false;
+  }
+});
 
 // --- Helpers -------------------------------------------------------------
 function el(tag, className, text) {
@@ -180,6 +232,7 @@ async function send(message) {
   busy = true;
   sendBtn.disabled = true;
   input.disabled = true;
+  modelSelect.disabled = true; // do not switch models mid-answer
   if (welcome) welcome.style.display = "none";
 
   addUserMessage(message);
@@ -221,6 +274,7 @@ async function send(message) {
     busy = false;
     sendBtn.disabled = false;
     input.disabled = false;
+    if (!modelLocked) modelSelect.disabled = false;
     input.focus();
   }
 }
